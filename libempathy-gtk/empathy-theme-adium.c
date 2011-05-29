@@ -199,34 +199,16 @@ theme_adium_open_address_cb (GtkMenuItem *menuitem,
 	g_free (uri);
 }
 
-/* Replace each %@ in format with string passed in args */
-static gchar *
-string_with_format (const gchar *format,
-		    const gchar *first_string,
-		    ...)
+/* Replace %@ with %s in the string */
+static void
+string_with_format (gchar *format)
 {
-	va_list args;
-	const gchar *str;
-	GString *result;
+	gchar *str = format;
 
-	va_start (args, first_string);
-	result = g_string_sized_new (strlen (format));
-	for (str = first_string; str != NULL; str = va_arg (args, const gchar *)) {
-		const gchar *next;
-
-		next = strstr (format, "%@");
-		if (next == NULL) {
-			break;
-		}
-
-		g_string_append_len (result, format, next - format);
-		g_string_append (result, str);
-		format = next + 2;
+	while ((str = strstr (str, "%@")) != NULL) {
+		str[1] = 's';
+		str += 2;
 	}
-	g_string_append (result, format);
-	va_end (args);
-
-	return g_string_free (result, FALSE);
 }
 
 static void
@@ -1933,15 +1915,16 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 
 	/* Old custom templates had only 4 parameters.
 	 * New templates have 5 parameters */
+	string_with_format (template_html);
 	if (data->version <= 2 && data->custom_template) {
-		tmp = string_with_format (template_html,
+		tmp = g_strdup_printf (template_html,
 			data->basedir,
 			variant_path,
 			"", /* The header */
 			footer_html ? footer_html : "",
 			NULL);
 	} else {
-		tmp = string_with_format (template_html,
+		tmp = g_strdup_printf (template_html,
 			data->basedir,
 			data->version <= 2 ? "" : "@import url( \"main.css\" );",
 			variant_path,
