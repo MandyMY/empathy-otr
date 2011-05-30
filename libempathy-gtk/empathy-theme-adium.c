@@ -75,9 +75,6 @@ struct _EmpathyAdiumData {
 	gint  ref_count;
 	gchar *path;
 	gchar *basedir;
-	gchar *default_avatar_filename;
-	gchar *default_incoming_avatar_filename;
-	gchar *default_outgoing_avatar_filename;
 	GHashTable *info;
 	guint version;
 	gboolean custom_template;
@@ -96,6 +93,9 @@ struct _EmpathyAdiumData {
 	const gchar *out_nextcontent_html;
 	const gchar *out_nextcontext_html;
 	const gchar *status_html;
+	const gchar *filetransfer_html;
+	const gchar *default_incoming_avatar_filename;
+	const gchar *default_outgoing_avatar_filename;
 
 	/* Above html strings are pointers to strings stored in this array.
 	 * We do this because of fallbacks, some htmls could be pointing the
@@ -834,14 +834,6 @@ theme_adium_append_message (EmpathyChatView *view,
 			avatar_filename = priv->data->default_outgoing_avatar_filename;
 		} else {
 			avatar_filename = priv->data->default_incoming_avatar_filename;
-		}
-		if (!avatar_filename) {
-			if (!priv->data->default_avatar_filename) {
-				priv->data->default_avatar_filename =
-					empathy_filename_from_icon_name (EMPATHY_IMAGE_AVATAR_DEFAULT,
-									 GTK_ICON_SIZE_DIALOG);
-			}
-			avatar_filename = priv->data->default_avatar_filename;
 		}
 	}
 
@@ -1859,6 +1851,22 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 #undef LOAD_CONST
 #undef LOAD
 
+	/* Default avatar */
+	tmp = g_build_filename (data->basedir, "Incoming", "buddy_icon.png", NULL);
+	if (g_file_test (tmp, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+		data->default_incoming_avatar_filename = tmp;
+		g_ptr_array_add (data->strings_to_free, tmp);
+	} else {
+		g_free (tmp);
+	}
+	tmp = g_build_filename (data->basedir, "Outgoing", "buddy_icon.png", NULL);
+	if (g_file_test (tmp, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
+		data->default_outgoing_avatar_filename = tmp;
+		g_ptr_array_add (data->strings_to_free, tmp);
+	} else {
+		g_free (tmp);
+	}
+
 	/* HTML fallbacks: If we have at least content OR in_content, then
 	 * everything else gets a fallback */
 
@@ -1886,6 +1894,13 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 	/* status -> in_content */
 	FALLBACK (data->status_html,          data->in_content_html);
 
+	/* outgoing_avatar -> incoming_avatar -> user-icon */
+	FALLBACK (data->default_incoming_avatar_filename,
+		  empathy_filename_from_icon_name (EMPATHY_IMAGE_AVATAR_DEFAULT,
+						   GTK_ICON_SIZE_DIALOG))
+	FALLBACK (data->default_outgoing_avatar_filename,
+		  data->default_incoming_avatar_filename);
+
 #undef FALLBACK
 
 	/* template -> empathy's template */
@@ -1893,20 +1908,6 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 	if (template_html == NULL) {
 		tmp = empathy_file_lookup ("Template.html", "data");
 		g_file_get_contents (tmp, &template_html, NULL, NULL);
-		g_free (tmp);
-	}
-
-	/* Default avatar */
-	tmp = g_build_filename (data->basedir, "Incoming", "buddy_icon.png", NULL);
-	if (g_file_test (tmp, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
-		data->default_incoming_avatar_filename = tmp;
-	} else {
-		g_free (tmp);
-	}
-	tmp = g_build_filename (data->basedir, "Outgoing", "buddy_icon.png", NULL);
-	if (g_file_test (tmp, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_REGULAR)) {
-		data->default_outgoing_avatar_filename = tmp;
-	} else {
 		g_free (tmp);
 	}
 
@@ -1973,9 +1974,6 @@ empathy_adium_data_unref (EmpathyAdiumData *data)
 	if (g_atomic_int_dec_and_test (&data->ref_count)) {
 		g_free (data->path);
 		g_free (data->basedir);
-		g_free (data->default_avatar_filename);
-		g_free (data->default_incoming_avatar_filename);
-		g_free (data->default_outgoing_avatar_filename);
 		g_hash_table_unref (data->info);
 		g_ptr_array_unref (data->strings_to_free);
 		tp_clear_pointer (&data->date_format_cache, g_hash_table_unref);
