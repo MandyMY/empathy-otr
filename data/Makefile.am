@@ -44,6 +44,7 @@ org.freedesktop.Telepathy.Client.Empathy.Auth.service: org.freedesktop.Telepathy
 clientfiledir = $(datarootdir)/telepathy/clients
 clientfile_DATA = \
 	Empathy.Chat.client \
+	Empathy.ChatApprover.client \
 	Empathy.AudioVideo.client \
 	Empathy.Auth.client
 

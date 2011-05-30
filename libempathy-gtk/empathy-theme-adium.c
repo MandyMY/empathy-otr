@@ -526,19 +526,24 @@ nsdate_to_strftime (EmpathyAdiumData *data, const gchar *nsdate)
 	return g_string_free (string, FALSE);
 }
 
+typedef struct {
+	const gchar *message;
+	const gchar *avatar_filename;
+	const gchar *name;
+	const gchar *contact_id;
+	const gchar *service_name;
+	const gchar *message_classes;
+	const gchar *file_icon_path;
+	const gchar *filename;
+	gint64       timestamp;
+	gboolean     is_backlog;
+} ThemeAdiumKeywords;
 
 static void
 theme_adium_append_html (EmpathyThemeAdium *theme,
-			 const gchar       *func,
-			 const gchar       *html,
-		         const gchar       *message,
-		         const gchar       *avatar_filename,
-		         const gchar       *name,
-		         const gchar       *contact_id,
-		         const gchar       *service_name,
-		         const gchar       *message_classes,
-		         gint64             timestamp,
-		         gboolean           is_backlog)
+			 const gchar *func,
+			 const gchar *html,
+			 const ThemeAdiumKeywords *keywords)
 {
 	EmpathyThemeAdiumPriv *priv = GET_PRIV (theme);
 	GString     *string;
@@ -546,7 +551,7 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 	gchar       *script;
 
 	/* Make some search-and-replace in the html code */
-	string = g_string_sized_new (strlen (html) + strlen (message));
+	string = g_string_sized_new (strlen (html));
 	g_string_append_printf (string, "%s(\"", func);
 	for (cur = html; *cur != '\0'; cur++) {
 		const gchar *replace = NULL;
@@ -557,19 +562,19 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 		 * html files. Please keep them in the same order than the adium
 		 * spec. See http://trac.adium.im/wiki/CreatingMessageStyles */
 		if (theme_adium_match (&cur, "%userIconPath%")) {
-			replace = avatar_filename;
+			replace = keywords->avatar_filename;
 		} else if (theme_adium_match (&cur, "%senderScreenName%")) {
-			replace = contact_id;
+			replace = keywords->contact_id;
 		} else if (theme_adium_match (&cur, "%sender%")) {
-			replace = name;
+			replace = keywords->name;
 		} else if (theme_adium_match (&cur, "%senderColor%")) {
 			/* A color derived from the user's name.
 			 * FIXME: If a colon separated list of HTML colors is at
 			 * Incoming/SenderColors.txt it will be used instead of
 			 * the default colors.
 			 */
-			if (contact_id != NULL) {
-				guint hash = g_str_hash (contact_id);
+			if (keywords->contact_id != NULL) {
+				guint hash = g_str_hash (keywords->contact_id);
 				replace = colors[hash % G_N_ELEMENTS (colors)];
 			}
 		} else if (theme_adium_match (&cur, "%senderStatusIcon%")) {
@@ -587,7 +592,7 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 			 *  We don't have access to that yet so we use
 			 * local alias instead.
 			 */
-			replace = name;
+			replace = keywords->name;
 		} else if (theme_adium_match_with_format (&cur, "%textbackgroundcolor{", &format)) {
 			/* FIXME: This keyword is used to represent the
 			 * highlight background color. "X" is the opacity of the
@@ -595,28 +600,28 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 			 * between.
 			 */
 		} else if (theme_adium_match (&cur, "%message%")) {
-			replace = message;
+			replace = keywords->message;
 		} else if (theme_adium_match (&cur, "%time%") ||
 			   theme_adium_match_with_format (&cur, "%time{", &format)) {
 			const gchar *strftime_format;
 
 			strftime_format = nsdate_to_strftime (priv->data, format);
-			if (is_backlog) {
-				dup_replace = empathy_time_to_string_local (timestamp,
+			if (keywords->is_backlog) {
+				dup_replace = empathy_time_to_string_local (keywords->timestamp,
 					strftime_format ? strftime_format :
 					EMPATHY_TIME_DATE_FORMAT_DISPLAY_SHORT);
 			} else {
-				dup_replace = empathy_time_to_string_local (timestamp,
+				dup_replace = empathy_time_to_string_local (keywords->timestamp,
 					strftime_format ? strftime_format :
 					EMPATHY_TIME_FORMAT_DISPLAY_SHORT);
 			}
 			replace = dup_replace;
 		} else if (theme_adium_match (&cur, "%shortTime%")) {
-			dup_replace = empathy_time_to_string_local (timestamp,
+			dup_replace = empathy_time_to_string_local (keywords->timestamp,
 				EMPATHY_TIME_FORMAT_DISPLAY_SHORT);
 			replace = dup_replace;
 		} else if (theme_adium_match (&cur, "%service%")) {
-			replace = service_name;
+			replace = keywords->service_name;
 		} else if (theme_adium_match (&cur, "%variant%")) {
 			/* FIXME: The name of the active message style variant,
 			 * with all spaces replaced with an underscore.
@@ -628,7 +633,7 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 			 * to hide avatars */
 			replace = "showIcons";
 		} else if (theme_adium_match (&cur, "%messageClasses%")) {
-			replace = message_classes;
+			replace = keywords->message_classes;
 		} else if (theme_adium_match (&cur, "%status%")) {
 			/* FIXME: A description of the status event. This is
 			 * neither in the user's local language nor expected to
@@ -656,6 +661,10 @@ theme_adium_append_html (EmpathyThemeAdium *theme,
 			 *	fileTransferStarted
 			 *	fileTransferCompleted
 			 */
+		} else if (theme_adium_match (&cur, "%fileIconPath%")) {
+			replace = keywords->file_icon_path;
+		} else if (theme_adium_match (&cur, "%fileName%")) {
+			replace = keywords->filename;
 		} else {
 			escape_and_append_len (string, cur, 1);
 			continue;
@@ -680,11 +689,13 @@ theme_adium_append_event_escaped (EmpathyChatView *view,
 {
 	EmpathyThemeAdium     *theme = EMPATHY_THEME_ADIUM (view);
 	EmpathyThemeAdiumPriv *priv = GET_PRIV (theme);
+	ThemeAdiumKeywords keywords = { 0, };
 
-	theme_adium_append_html (theme, "appendMessage",
-				 priv->data->status_html, escaped, NULL, NULL, NULL,
-				 NULL, "event",
-				 empathy_time_get_current (), FALSE);
+	keywords.message = escaped;
+	keywords.message_classes = "event";
+	keywords.timestamp = empathy_time_get_current ();
+	theme_adium_append_html (theme, "appendMessage", priv->data->status_html,
+				 &keywords);
 
 	/* There is no last contact */
 	if (priv->last_contact) {
@@ -787,6 +798,7 @@ theme_adium_append_message (EmpathyChatView *view,
 	gboolean               is_backlog;
 	gboolean               consecutive;
 	gboolean               action;
+	ThemeAdiumKeywords     keywords = { 0, };
 
 	if (priv->pages_loading != 0) {
 		GValue *value = tp_g_value_slice_new (EMPATHY_TYPE_MESSAGE);
@@ -929,10 +941,15 @@ theme_adium_append_message (EmpathyChatView *view,
 		}
 	}
 
-	theme_adium_append_html (theme, func, html, body_escaped,
-				 avatar_filename, name, contact_id,
-				 service_name, message_classes->str,
-				 timestamp, is_backlog);
+	keywords.message = body_escaped;
+	keywords.avatar_filename = avatar_filename;
+	keywords.name = name;
+	keywords.contact_id = contact_id;
+	keywords.service_name = service_name;
+	keywords.message_classes = message_classes->str;
+	keywords.timestamp = timestamp;
+	keywords.is_backlog = is_backlog;
+	theme_adium_append_html (theme, func, html, &keywords);
 
 	/* Keep the sender of the last displayed message */
 	if (priv->last_contact) {
@@ -962,6 +979,45 @@ theme_adium_append_event (EmpathyChatView *view,
 	str_escaped = g_markup_escape_text (str, -1);
 	theme_adium_append_event_escaped (view, str_escaped);
 	g_free (str_escaped);
+}
+
+static void
+theme_adium_append_file_transfer (EmpathyChatView *view,
+				  TpFileTransferChannel *channel)
+{
+	EmpathyThemeAdium     *theme = EMPATHY_THEME_ADIUM (view);
+	EmpathyThemeAdiumPriv *priv = GET_PRIV (theme);
+	gchar *content_type;
+	GIcon *icon;
+	GtkIconInfo *icon_info;
+	ThemeAdiumKeywords keywords = { 0, };
+
+	if (priv->pages_loading != 0) {
+		GValue *value = tp_g_value_slice_new (TP_TYPE_FILE_TRANSFER_CHANNEL);
+		g_value_set_object (value, channel);
+		g_queue_push_tail (&priv->message_queue, value);
+		return;
+	}
+
+	content_type = g_content_type_from_mime_type (
+		tp_file_transfer_channel_get_content_type (channel));
+	icon = g_content_type_get_icon (content_type);
+	icon_info = gtk_icon_theme_lookup_by_gicon (gtk_icon_theme_get_default (),
+			icon, 64, 0);
+
+	/* FIXME: Need a TpContact for the avatar/alias, and JS methods for
+	 * save, save-as and cancel */
+	keywords.timestamp = empathy_time_get_current ();
+	keywords.contact_id = tp_channel_get_identifier (TP_CHANNEL (channel));
+	keywords.file_icon_path = gtk_icon_info_get_filename (icon_info);
+	keywords.filename = tp_file_transfer_channel_get_filename (channel);
+	keywords.avatar_filename = priv->data->default_incoming_avatar_filename;
+	theme_adium_append_html (theme, "appendMessage",
+				 priv->data->filetransfer_html, &keywords);
+
+	g_free (content_type);
+	g_object_unref (icon);
+	gtk_icon_info_free (icon_info);
 }
 
 static void
@@ -1266,6 +1322,7 @@ theme_adium_iface_init (EmpathyChatViewIface *iface)
 {
 	iface->append_message = theme_adium_append_message;
 	iface->append_event = theme_adium_append_event;
+	iface->append_file_transfer = theme_adium_append_file_transfer;
 	iface->scroll = theme_adium_scroll;
 	iface->scroll_down = theme_adium_scroll_down;
 	iface->get_has_selection = theme_adium_get_has_selection;
@@ -1298,12 +1355,15 @@ theme_adium_load_finished_cb (WebKitWebView  *view,
 	for (l = priv->message_queue.head; l != NULL; l = l->next) {
 		GValue *value = l->data;
 
-		if (G_VALUE_HOLDS_OBJECT (value)) {
+		if (G_VALUE_HOLDS (value, EMPATHY_TYPE_MESSAGE)) {
 			theme_adium_append_message (chat_view,
 				g_value_get_object (value));
-		} else {
+		} else if (G_VALUE_HOLDS_STRING (value)) {
 			theme_adium_append_event (chat_view,
 				g_value_get_string (value));
+		} else if (G_VALUE_HOLDS (value, TP_TYPE_FILE_TRANSFER_CHANNEL)) {
+			theme_adium_append_file_transfer (chat_view,
+				g_value_get_object (value));
 		}
 
 		tp_g_value_slice_free (value);
@@ -1845,6 +1905,7 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 	LOAD_CONST ("Outgoing/Context.html", data->out_context_html);
 	LOAD_CONST ("Outgoing/NextContext.html", data->out_nextcontext_html);
 	LOAD_CONST ("Status.html", data->status_html);
+	LOAD_CONST ("FileTransferRequest.html", data->filetransfer_html);
 	LOAD ("Template.html", template_html);
 	LOAD ("Footer.html", footer_html);
 
@@ -1902,6 +1963,22 @@ empathy_adium_data_new_with_info (const gchar *path, GHashTable *info)
 		  data->default_incoming_avatar_filename);
 
 #undef FALLBACK
+
+	/* Filetransfer fallback to a modified version of in_content_html */
+	if (data->filetransfer_html == NULL) {
+		gchar *pos;
+		GString *string;
+
+		string = g_string_sized_new (strlen (data->in_content_html));
+		pos = strstr (data->in_content_html, "%message%");
+		g_string_append_len (string, data->in_content_html, pos - data->in_content_html);
+		g_string_append (string, "<p><img src=\"%fileIconPath%\" style=\"width:32px; height:32px; vertical-align:middle;\"></img><input type=\"button\" onclick=\"%saveFileAsHandler%\" value=\"Download %fileName%\"></p>");
+		g_string_append (string, pos + strlen ("%message%"));
+
+		data->filetransfer_html = string->str;
+		g_ptr_array_add (data->strings_to_free, g_string_free (string, FALSE));
+	}
+	/* FIXME: need to replace "Download" with localized string */
 
 	/* template -> empathy's template */
 	data->custom_template = (template_html != NULL);

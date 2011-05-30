@@ -28,6 +28,8 @@
 #include <libempathy/empathy-contact.h>
 #include <libempathy/empathy-message.h>
 
+#include <telepathy-glib/telepathy-glib.h>
+
 G_BEGIN_DECLS
 
 #define EMPATHY_TYPE_CHAT_VIEW         (empathy_chat_view_get_type ())
@@ -46,6 +48,8 @@ struct _EmpathyChatViewIface {
 						  EmpathyMessage  *msg);
 	void             (*append_event)         (EmpathyChatView *view,
 						  const gchar     *str);
+	void             (*append_file_transfer) (EmpathyChatView *view,
+						  TpFileTransferChannel *channel);
 	void             (*scroll)               (EmpathyChatView *view,
 						  gboolean         allow_scrolling);
 	void             (*scroll_down)          (EmpathyChatView *view);
@@ -79,6 +83,8 @@ void             empathy_chat_view_append_message       (EmpathyChatView *view,
 							 EmpathyMessage  *msg);
 void             empathy_chat_view_append_event         (EmpathyChatView *view,
 							 const gchar     *str);
+void             empathy_chat_view_append_file_transfer (EmpathyChatView *view,
+							 TpFileTransferChannel *channel);
 void             empathy_chat_view_scroll               (EmpathyChatView *view,
 							 gboolean         allow_scrolling);
 void             empathy_chat_view_scroll_down          (EmpathyChatView *view);

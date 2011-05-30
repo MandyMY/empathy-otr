@@ -69,6 +69,7 @@ struct _EmpathyChatManagerPriv
   GHashTable *messages;
 
   TpBaseClient *handler;
+  TpBaseClient *approver;
 };
 
 #define GET_PRIV(o) \
@@ -232,6 +233,52 @@ handle_channels (TpSimpleHandler *handler,
 }
 
 static void
+approve_channels (TpSimpleApprover *approver,
+    TpAccount *account,
+    TpConnection *connection,
+    GList *channels,
+    TpChannelDispatchOperation *dispatch_operation,
+    TpAddDispatchOperationContext *context,
+    gpointer user_data)
+{
+  TpFileTransferChannel *channel;
+  EmpathyChat *chat;
+  GError *error = NULL;
+
+  if (channels == NULL || channels->next != NULL ||
+      tp_proxy_get_invalidated (channels->data) != NULL ||
+      !TP_IS_FILE_TRANSFER_CHANNEL (channels->data))
+    {
+      g_set_error_literal (&error, TP_ERROR, TP_ERROR_INVALID_ARGUMENT,
+          "invalid channel");
+      tp_add_dispatch_operation_context_fail (context, error);
+      g_clear_error (&error);
+      return;
+    }
+
+  channel = channels->data;
+
+  DEBUG ("Incoming FileTransfer to approve: %s",
+      tp_proxy_get_object_path (channel));
+
+  chat = empathy_chat_window_find_chat (account,
+      tp_channel_get_identifier (TP_CHANNEL (channel)), FALSE);
+
+  if (chat == NULL)
+    {
+      g_set_error_literal (&error, TP_ERROR, TP_ERROR_NOT_AVAILABLE,
+          "no chat for that contact");
+      tp_add_dispatch_operation_context_fail (context, error);
+      g_clear_error (&error);
+      return;
+    }
+
+  /* FIXME: connect a signal somehow to accept/reject the DO */
+  empathy_chat_view_append_file_transfer (chat->view, channel);
+  tp_add_dispatch_operation_context_accept (context);
+}
+
+static void
 empathy_chat_manager_init (EmpathyChatManager *self)
 {
   EmpathyChatManagerPriv *priv = GET_PRIV (self);
@@ -242,7 +289,9 @@ empathy_chat_manager_init (EmpathyChatManager *self)
   priv->closed_queue = g_queue_new ();
   priv->messages = g_hash_table_new_full (g_str_hash, g_str_equal,
       g_free, (GDestroyNotify) g_hash_table_unref);
+  priv->chatroom_mgr = empathy_chatroom_manager_dup_singleton (NULL);
 
+  factory = empathy_channel_factory_dup ();
   dbus = tp_dbus_daemon_dup (&error);
   if (dbus == NULL)
     {
@@ -250,8 +299,6 @@ empathy_chat_manager_init (EmpathyChatManager *self)
       g_error_free (error);
       return;
     }
-
-  priv->chatroom_mgr = empathy_chatroom_manager_dup_singleton (NULL);
 
   /* Text channels handler */
   priv->handler = tp_simple_handler_new (dbus, FALSE, FALSE,
@@ -262,8 +309,6 @@ empathy_chat_manager_init (EmpathyChatManager *self)
     TP_CONNECTION_FEATURE_CAPABILITIES, 0);
   tp_base_client_add_channel_features_varargs (priv->handler,
       TP_CHANNEL_FEATURE_CHAT_STATES, 0);
-
-  g_object_unref (dbus);
 
   tp_base_client_take_handler_filter (priv->handler, tp_asv_new (
         TP_PROP_CHANNEL_CHANNEL_TYPE, G_TYPE_STRING, TP_IFACE_CHANNEL_TYPE_TEXT,
@@ -280,8 +325,6 @@ empathy_chat_manager_init (EmpathyChatManager *self)
         TP_PROP_CHANNEL_TARGET_HANDLE_TYPE, G_TYPE_UINT, TP_HANDLE_TYPE_NONE,
         NULL));
 
-  factory = empathy_channel_factory_dup ();
-
   tp_base_client_set_channel_factory (priv->handler,
       TP_CLIENT_CHANNEL_FACTORY (factory));
 
@@ -291,7 +334,26 @@ empathy_chat_manager_init (EmpathyChatManager *self)
       g_error_free (error);
     }
 
+  /* FT channels approver */
+  priv->approver = tp_simple_approver_new (dbus, EMPATHY_CHAT_BUS_NAME_SUFFIX "Approver",
+      FALSE, approve_channels, self, NULL);
+
+  tp_base_client_take_approver_filter (priv->approver, tp_asv_new (
+        TP_PROP_CHANNEL_CHANNEL_TYPE, G_TYPE_STRING, TP_IFACE_CHANNEL_TYPE_FILE_TRANSFER,
+        TP_PROP_CHANNEL_TARGET_HANDLE_TYPE, G_TYPE_UINT, TP_HANDLE_TYPE_CONTACT,
+        NULL));
+
+  tp_base_client_set_channel_factory (priv->approver,
+      TP_CLIENT_CHANNEL_FACTORY (factory));
+
+  if (!tp_base_client_register (priv->approver, &error))
+    {
+      g_critical ("Failed to register FT approver: %s", error->message);
+      g_error_free (error);
+    }
+
   g_object_unref (factory);
+  g_object_unref (dbus);
 }
 
 static void

@@ -84,6 +84,18 @@ empathy_chat_view_append_event (EmpathyChatView *view,
 }
 
 void
+empathy_chat_view_append_file_transfer (EmpathyChatView *view,
+					TpFileTransferChannel *channel)
+{
+	g_return_if_fail (EMPATHY_IS_CHAT_VIEW (view));
+
+	if (EMPATHY_TYPE_CHAT_VIEW_GET_IFACE (view)->append_file_transfer) {
+		EMPATHY_TYPE_CHAT_VIEW_GET_IFACE (view)->append_file_transfer (
+			view, channel);
+	}
+}
+
+void
 empathy_chat_view_scroll (EmpathyChatView *view,
 			  gboolean        allow_scrolling)
 {
