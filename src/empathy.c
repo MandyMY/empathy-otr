@@ -632,6 +632,7 @@ empathy_app_constructed (GObject *object)
   EmpathyApp *self = (EmpathyApp *) object;
   gboolean chatroom_manager_ready;
   gboolean autoaway;
+  EmpathyChannelFactory *factory;
 
   g_set_application_name (_(PACKAGE_NAME));
 
@@ -668,6 +669,7 @@ empathy_app_constructed (GObject *object)
       G_CALLBACK (use_conn_notify_cb), self->connectivity);
 
   /* account management */
+  factory = empathy_channel_factory_new ();
   self->account_manager = tp_account_manager_dup ();
   tp_account_manager_prepare_async (self->account_manager, NULL,
       account_manager_ready_cb, self);
