@@ -173,24 +173,21 @@ empathy_string_replace_link (const gchar *text,
 {
 	GString *string = user_data;
 	gchar *real_url;
-	gchar *title;
-	gchar *markup;
 
 	real_url = empathy_make_absolute_url_len (text, len);
 
-	/* Need to copy manually, because g_markup_printf_escaped does not work
-	 * with string precision pitfalls. */
-	title = g_strndup (text, len);
-
-	/* Append the link inside <a href=""></a> tag */
-	markup = g_markup_printf_escaped ("<a href=\"%s\">%s</a>",
-			real_url, title);
-
-	g_string_append (string, markup);
+	if (g_str_has_suffix (real_url, ".jpg")) {
+		g_string_append_printf (string, "<img src=\"%s\"/>", real_url);
+	} else if (g_str_has_suffix (real_url, ".avi")) {
+		g_string_append_printf (string,
+			"<video width=\"320\" height=\"240\" "
+			"controls=\"controls\" src=\"%s\"/>", real_url);
+	} else {
+		g_string_append_printf (string, "<a href=\"%s\">%.*s</a>",
+		    real_url, (int)len, text);
+	}
 
 	g_free (real_url);
-	g_free (title);
-	g_free (markup);
 }
 
 void
