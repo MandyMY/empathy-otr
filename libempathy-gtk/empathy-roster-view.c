@@ -30,6 +30,7 @@ enum
 {
   SIG_INDIVIDUAL_ACTIVATED,
   SIG_POPUP_INDIVIDUAL_MENU,
+  SIG_POPUP_GROUP_MENU,
   SIG_EVENT_ACTIVATED,
   SIG_INDIVIDUAL_TOOLTIP,
   LAST_SIGNAL
@@ -1144,17 +1145,28 @@ fire_popup_individual_menu (EmpathyRosterView *self,
     guint button,
     guint time)
 {
-  EmpathyRosterContact *contact;
-  FolksIndividual *individual;
+  if (EMPATHY_IS_ROSTER_CONTACT (child))
+    {
+      EmpathyRosterContact *contact;
+      FolksIndividual *individual;
 
-  if (!EMPATHY_IS_ROSTER_CONTACT (child))
-    return;
+      contact = EMPATHY_ROSTER_CONTACT (child);
+      individual = empathy_roster_contact_get_individual (contact);
 
-  contact = EMPATHY_ROSTER_CONTACT (child);
-  individual = empathy_roster_contact_get_individual (contact);
+      g_signal_emit (self, signals[SIG_POPUP_INDIVIDUAL_MENU], 0,
+          individual, button, time);
+    }
+  else if (EMPATHY_IS_ROSTER_GROUP (child))
+    {
+      EmpathyRosterGroup *group;
+      const gchar *name;
 
-  g_signal_emit (self, signals[SIG_POPUP_INDIVIDUAL_MENU], 0,
-      individual, button, time);
+      group = EMPATHY_ROSTER_GROUP (child);
+      name = empathy_roster_group_get_name (group);
+
+      g_signal_emit (self, signals[SIG_POPUP_GROUP_MENU], 0,
+          name, button, time);
+    }
 }
 
 static gboolean
@@ -1348,6 +1360,13 @@ empathy_roster_view_class_init (
       0, NULL, NULL, NULL,
       G_TYPE_NONE,
       3, FOLKS_TYPE_INDIVIDUAL, G_TYPE_UINT, G_TYPE_UINT);
+
+  signals[SIG_POPUP_GROUP_MENU] = g_signal_new ("popup-group-menu",
+      G_OBJECT_CLASS_TYPE (klass),
+      G_SIGNAL_RUN_LAST,
+      0, NULL, NULL, NULL,
+      G_TYPE_NONE,
+      3, G_TYPE_STRING, G_TYPE_UINT, G_TYPE_UINT);
 
   signals[SIG_EVENT_ACTIVATED] = g_signal_new ("event-activated",
       G_OBJECT_CLASS_TYPE (klass),

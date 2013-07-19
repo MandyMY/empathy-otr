@@ -1948,12 +1948,33 @@ menu_deactivate_cb (GtkMenuShell *menushell,
 }
 
 static void
+popup_menu (EmpathyRosterWindow *self,
+    GtkWidget *menu,
+    guint button,
+    guint time)
+{
+  /* menu is initially unowned but gtk_menu_attach_to_widget() takes its
+   * floating ref. We can either wait for the view to release its ref
+   * when it is destroyed (when leaving Empathy) or explicitly
+   * detach the menu when it's not displayed any more.
+   * We go for the latter as we don't want to keep useless menus in memory
+   * during the whole lifetime of Empathy. */
+  g_signal_connect (menu, "deactivate", G_CALLBACK (menu_deactivate_cb),
+      NULL);
+
+  gtk_menu_attach_to_widget (GTK_MENU (menu), GTK_WIDGET (self->priv->view),
+      NULL);
+  gtk_menu_popup (GTK_MENU (menu), NULL, NULL, NULL, NULL, button, time);
+}
+
+static void
 popup_individual_menu_cb (EmpathyRosterView *view,
     FolksIndividual *individual,
     guint button,
     guint time,
     gpointer user_data)
 {
+  EmpathyRosterWindow *self = user_data;
   GtkWidget *menu;
   EmpathyIndividualFeatureFlags features = EMPATHY_INDIVIDUAL_FEATURE_CHAT |
     EMPATHY_INDIVIDUAL_FEATURE_CALL |
@@ -1966,18 +1987,44 @@ popup_individual_menu_cb (EmpathyRosterView *view,
     EMPATHY_INDIVIDUAL_FEATURE_FILE_TRANSFER;
 
   menu = empathy_individual_menu_new (individual, features, NULL);
+  popup_menu (self, menu, button, time);
+}
 
-  /* menu is initially unowned but gtk_menu_attach_to_widget() takes its
-   * floating ref. We can either wait for the view to release its ref
-   * when it is destroyed (when leaving Empathy) or explicitly
-   * detach the menu when it's not displayed any more.
-   * We go for the latter as we don't want to keep useless menus in memory
-   * during the whole lifetime of Empathy. */
-  g_signal_connect (menu, "deactivate", G_CALLBACK (menu_deactivate_cb),
-      NULL);
+static void
+group_remove_activate_cb (GtkWidget *item,
+    EmpathyRosterWindow *self)
+{
+  const gchar *group;
 
-  gtk_menu_attach_to_widget (GTK_MENU (menu), GTK_WIDGET (view), NULL);
-  gtk_menu_popup (GTK_MENU (menu), NULL, NULL, NULL, NULL, button, time);
+  group = g_object_get_data (G_OBJECT (item), "group");
+  empathy_individual_manager_remove_group (self->priv->individual_manager,
+      group);
+}
+
+static void
+popup_group_menu_cb (EmpathyRosterView *view,
+    const gchar *group,
+    guint button,
+    guint time,
+    gpointer user_data)
+{
+  EmpathyRosterWindow *self = user_data;
+  GtkWidget *menu;
+  GtkWidget *item;
+
+  menu = gtk_menu_new ();
+
+  g_print ("removing group %s\n", group);
+
+  item = gtk_image_menu_item_new_from_stock (GTK_STOCK_REMOVE, NULL);
+  g_object_set_data_full (G_OBJECT (item), "group", g_strdup (group),
+      g_free);
+  g_signal_connect (item, "activate",
+      G_CALLBACK (group_remove_activate_cb), self);
+  gtk_menu_shell_append (GTK_MENU_SHELL (menu), item);
+  gtk_widget_show (item);
+
+  popup_menu (self, menu, button, time);
 }
 
 static void
@@ -2347,6 +2394,8 @@ empathy_roster_window_init (EmpathyRosterWindow *self)
       G_CALLBACK (event_activated_cb), self);
   g_signal_connect (self->priv->view, "popup-individual-menu",
       G_CALLBACK (popup_individual_menu_cb), self);
+  g_signal_connect (self->priv->view, "popup-group-menu",
+      G_CALLBACK (popup_group_menu_cb), self);
   g_signal_connect (self->priv->view, "notify::empty",
       G_CALLBACK (view_empty_cb), self);
   g_signal_connect (self->priv->view, "individual-tooltip",
