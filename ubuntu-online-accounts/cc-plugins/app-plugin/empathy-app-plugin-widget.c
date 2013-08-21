@@ -27,8 +27,9 @@
 #include <libaccounts-glib/ag-manager.h>
 #include <libaccounts-glib/ag-provider.h>
 
+#include <tp-account-widgets/tpaw-user-info.h>
+
 #include "empathy-contact.h"
-#include "empathy-user-info.h"
 
 #include "empathy-app-plugin-widget.h"
 
@@ -101,12 +102,12 @@ response_cb (GtkWidget *widget,
 {
   if (self->priv->user_info != NULL)
     {
-      EmpathyUserInfo *user_info = (EmpathyUserInfo *) self->priv->user_info;
+      TpawUserInfo *user_info = (TpawUserInfo *) self->priv->user_info;
 
       if (response == GTK_RESPONSE_OK)
-        empathy_user_info_apply_async (user_info, NULL, NULL);
+        tpaw_user_info_apply_async (user_info, NULL, NULL);
       else
-        empathy_user_info_discard (user_info);
+        tpaw_user_info_discard (user_info);
     }
 
   g_signal_emit (self, signals[SIG_DONE], 0);
@@ -208,7 +209,7 @@ manager_prepared_cb (GObject *source,
           GtkWidget *alig;
 
           alig = gtk_alignment_new (0.5, 0, 0, 0);
-          self->priv->user_info = empathy_user_info_new (account);
+          self->priv->user_info = tpaw_user_info_new (account);
           gtk_container_add (GTK_CONTAINER (alig), self->priv->user_info);
           gtk_widget_show (self->priv->user_info);
 

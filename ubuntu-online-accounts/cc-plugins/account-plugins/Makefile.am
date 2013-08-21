@@ -5,6 +5,7 @@ INCLUDES =					\
 	-I$(top_srcdir)/libempathy		\
 	-I$(top_srcdir)/libempathy-gtk		\
 	-DLOCALEDIR=\""$(datadir)/locale"\"	\
+	$(TPAW_CFLAGS)				\
 	$(UOA_CFLAGS)				\
 	$(WARN_CFLAGS)				\
 	$(ERROR_CFLAGS)				\
