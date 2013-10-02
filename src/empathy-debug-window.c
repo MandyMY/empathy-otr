@@ -1179,7 +1179,7 @@ debug_window_fill_service_chooser (EmpathyDebugWindow *self)
 
   gtk_list_store_insert_with_values (self->priv->service_store, &iter, -1,
       COL_NAME, "mission-control",
-      COL_UNIQUE_NAME, "org.freedesktop.Telepathy.MissionControl5",
+      COL_UNIQUE_NAME, "im.telepathy1.MissionControl5",
       COL_GONE, FALSE,
       COL_ACTIVE_BUFFER, active_buffer,
       COL_PAUSE_BUFFER, pause_buffer,
