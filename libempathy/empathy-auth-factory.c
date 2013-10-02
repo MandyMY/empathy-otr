@@ -762,7 +762,7 @@ empathy_auth_factory_class_init (EmpathyAuthFactoryClass *klass)
 }
 
 EmpathyAuthFactory *
-empathy_auth_factory_new (TpSimpleClientFactory *factory)
+empathy_auth_factory_new (TpClientFactory *factory)
 {
   return g_object_new (EMPATHY_TYPE_AUTH_FACTORY,
       "factory", factory,

@@ -612,8 +612,7 @@ event_manager_approval_done (EventManagerApproval *approval)
 
       channel_type = tp_channel_get_channel_type_id (approval->main_channel);
 
-      if (channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_STREAMED_MEDIA ||
-          channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_CALL)
+      if (channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_CALL)
         {
           priv->ringing--;
           if (priv->ringing == 0)
@@ -747,7 +746,7 @@ display_invite_room_dialog (EventManagerApproval *approval)
   EmpathyEventManagerPriv *priv = GET_PRIV (approval->manager);
 
   self_contact = tp_channel_group_get_self_contact (approval->main_channel);
-  tp_channel_group_get_local_pending_contact_info (approval->main_channel,
+  tp_channel_group_get_local_pending_info (approval->main_channel,
       self_contact, NULL, NULL, &invite_msg);
 
   if (approval->contact != NULL)
@@ -797,8 +796,7 @@ find_main_channel (GList *channels)
 
       channel_type = tp_channel_get_channel_type_id (channel);
 
-      if (channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_STREAMED_MEDIA ||
-          channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_CALL ||
+      if (channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_CALL ||
           channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_FILE_TRANSFER ||
           channel_type == TP_IFACE_QUARK_CHANNEL_TYPE_SERVER_AUTHENTICATION)
         return channel;
@@ -1405,12 +1403,6 @@ empathy_event_manager_init (EmpathyEventManager *manager)
         NULL));
 
   /* Calls */
-  tp_base_client_take_approver_filter (priv->approver,
-      tp_asv_new (
-        TP_PROP_CHANNEL_CHANNEL_TYPE, G_TYPE_STRING,
-          TP_IFACE_CHANNEL_TYPE_STREAMED_MEDIA,
-        TP_PROP_CHANNEL_TARGET_HANDLE_TYPE, G_TYPE_UINT, TP_HANDLE_TYPE_CONTACT,
-        NULL));
   tp_base_client_take_approver_filter (priv->approver,
       tp_asv_new (
         TP_PROP_CHANNEL_CHANNEL_TYPE, G_TYPE_STRING,
