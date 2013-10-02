@@ -146,6 +146,14 @@ AM_PATH_PYTHON([2.3])
 
 EMPATHY_ARG_VALGRIND
 
+AC_ARG_ENABLE([installed-tests],
+ AC_HELP_STRING([--enable-installed-tests],
+ [make tests installable]),
+ [installed_tests=$enableval], [installed_tests=no])
+
+AS_IF([test x$installed_tests = xyes],
+  [AC_DEFINE([ENABLE_INSTALLED_TESTS], [], [Make tests installable])])
+AM_CONDITIONAL([ENABLE_INSTALLED_TESTS], [test "x$installed_tests" = xyes])
 
 # -----------------------------------------------------------
 # Error flags
