@@ -424,7 +424,7 @@ migrate_account_to_uoa (TpAccountManager *am,
   tp_account_request_add_supersedes (ar,
       tp_proxy_get_object_path (account));
 
-  params = tp_account_dup_parameters_vardict (account);
+  params = tp_account_dup_parameters (account);
   g_variant_iter_init (&iter, params);
   while ((param = g_variant_iter_next_value (&iter)))
     {

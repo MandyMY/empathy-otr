@@ -336,7 +336,7 @@ empathy_uoa_auth_handler_start (EmpathyUoaAuthHandler *self,
     TpChannel *channel,
     TpAccount *tp_account)
 {
-  const GValue *id_value;
+  GVariant *id_variant;
   AgAccountId id;
   AgAccount *account;
   GList *l = NULL;
@@ -351,8 +351,18 @@ empathy_uoa_auth_handler_start (EmpathyUoaAuthHandler *self,
   DEBUG ("Start UOA auth for account: %s",
       tp_proxy_get_object_path (tp_account));
 
-  id_value = tp_account_get_storage_identifier (tp_account);
-  id = g_value_get_uint (id_value);
+  id_variant = tp_account_dup_storage_identifier (tp_account);
+  if (id_variant == NULL ||
+      !g_variant_is_of_type (id_variant, G_VARIANT_TYPE_UINT32))
+    {
+      DEBUG ("Invalid account storage identifier");
+      tp_channel_close_async (channel, NULL, NULL);
+      g_clear_pointer (&id_variant, g_variant_unref);
+      return;
+    }
+
+  id = g_variant_get_uint32 (id_variant);
+  g_variant_unref (id_variant);
 
   account = ag_manager_get_account (self->priv->manager, id);
   if (account != NULL)

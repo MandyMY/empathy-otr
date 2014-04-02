@@ -2650,12 +2650,16 @@ am_prepare_cb (GObject *source,
 
   if (ctx->account != NULL)
     {
-      const GValue *value;
+      GVariant *variant;
 
-      value = tp_account_get_storage_identifier (ctx->account);
+      variant = tp_account_dup_storage_identifier (ctx->account);
 
-      if (G_VALUE_HOLDS_UINT (value))
-        args = g_strdup_printf ("account-details=%u", g_value_get_uint (value));
+      if (variant != NULL &&
+          g_variant_is_of_type (variant, G_VARIANT_TYPE_UINT32))
+        {
+          args = g_strdup_printf ("account-details=%u",
+              g_variant_get_uint32 (variant));
+        }
     }
 
   empathy_launch_external_app ("unity-credentials-panel.desktop", args, NULL);

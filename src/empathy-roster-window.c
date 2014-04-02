@@ -723,14 +723,16 @@ roster_window_error_display (EmpathyRosterWindow *self,
     return;
 
 #ifdef HAVE_UOA
-  if (!tp_strdiff (TP_ERROR_STR_AUTHENTICATION_FAILED,
-       tp_account_get_detailed_error (account, NULL)) &&
+  err = tp_account_dup_detailed_error (account, NULL);
+  if (!tp_strdiff (TP_ERROR_STR_AUTHENTICATION_FAILED, err) &&
       !tp_strdiff (tp_account_get_storage_provider (account),
        EMPATHY_UOA_PROVIDER))
     {
       roster_window_uoa_auth_error (self, account);
+      g_free (err);
       return;
     }
+    g_free (err);
 #endif
 
   str = g_markup_printf_escaped ("<b>%s</b>\n%s",
