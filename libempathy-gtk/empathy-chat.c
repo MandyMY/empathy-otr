@@ -52,11 +52,21 @@
 #include "empathy-ui-utils.h"
 #include "empathy-utils.h"
 
+#include "_gdbus/Channel_Interface_OTR1.h"
+
 #define DEBUG_FLAG EMPATHY_DEBUG_CHAT
 #include "empathy-debug.h"
 
 #define IS_ENTER(v) (v == GDK_KEY_Return || v == GDK_KEY_ISO_Enter || v == GDK_KEY_KP_Enter)
 #define COMPOSING_STOP_TIMEOUT 5
+
+typedef enum
+{
+  TRUST_LEVEL_NOT_PRIVATE,
+  TRUST_LEVEL_UNVERIFIED,
+  TRUST_LEVEL_PRIVATE,
+  TRUST_LEVEL_FINISHED
+} TrustLevel;
 
 #define GET_PRIV(obj) EMPATHY_GET_PRIV (obj, EmpathyChat)
 struct _EmpathyChatPriv {
@@ -164,6 +174,9 @@ struct _EmpathyChatPriv {
 	/* TRUE if empathy_chat_is_room () and there are unread highlighted messages.
 	 * Cleared by empathy_chat_messages_read (). */
 	gboolean           highlighted;
+
+	EmpathyGDBusChannelInterfaceOTR1 *otr_proxy;
+	TrustLevel trust_level;
 };
 
 typedef struct {
@@ -1033,6 +1046,86 @@ chat_command_inspector (EmpathyChat *chat,
 	}
 }
 
+static const gchar *
+trust_level_to_str (TrustLevel level)
+{
+	switch (level) {
+		case TRUST_LEVEL_NOT_PRIVATE:
+			return _("The conversation is currently unencrypted.");
+		case TRUST_LEVEL_UNVERIFIED:
+			return _("The conversation is currently encrypted but "
+				 "the remote contact has not been authentified");
+		case TRUST_LEVEL_PRIVATE:
+			return _("The conversation is currently encrypted and "
+				 "the remote contact has been authentified");
+		case TRUST_LEVEL_FINISHED:
+			return _("The OTR session is finished");
+	}
+
+	return _("unknown");
+}
+
+static void
+chat_command_otr (EmpathyChat *chat,
+		  GStrv        strv)
+{
+	EmpathyChatPriv *priv = GET_PRIV (chat);
+
+	if (priv->otr_proxy == NULL) {
+		empathy_theme_adium_append_event (chat->view,
+			_("OTR is not supported on this account"));
+		return;
+	}
+
+	if (!tp_strdiff (strv[1], "start")) {
+		empathy_gdbus_channel_interface_otr1_call_initialize (
+			priv->otr_proxy, NULL, NULL, NULL);
+	} else if (!tp_strdiff (strv[1], "trust") ||
+	           !tp_strdiff (strv[1], "untrust")) {
+		GVariant *tuple;
+		GVariant *fp_variant;
+
+		tuple = empathy_gdbus_channel_interface_otr1_get_remote_fingerprint (
+			priv->otr_proxy);
+		g_variant_get (tuple, "(s@ay)", NULL, &fp_variant);
+
+		empathy_gdbus_channel_interface_otr1_call_trust_fingerprint (
+			priv->otr_proxy, fp_variant,
+			g_str_equal (strv[1], "trust"),
+			NULL, NULL, NULL);
+
+		g_variant_unref (fp_variant);
+	} else if (!tp_strdiff (strv[1], "show") ||
+	           !tp_strdiff (strv[1], "status")) {
+		GVariant *fp_variant;
+		const gchar *fp;
+		TrustLevel level;
+		gchar *msg;
+
+		fp_variant = empathy_gdbus_channel_interface_otr1_get_local_fingerprint (
+			priv->otr_proxy);
+		g_variant_get (fp_variant, "(&say)", &fp, NULL);
+		msg = g_strdup_printf (_("Your fingerprint: %s"), fp);
+		empathy_theme_adium_append_event (chat->view, msg);
+		g_free (msg);
+
+		fp_variant = empathy_gdbus_channel_interface_otr1_get_remote_fingerprint (
+			priv->otr_proxy);
+		g_variant_get (fp_variant, "(&say)", &fp, NULL);
+		msg = g_strdup_printf (_("Their fingerprint: %s"), fp);
+		empathy_theme_adium_append_event (chat->view, msg);
+		g_free (msg);
+
+		level = empathy_gdbus_channel_interface_otr1_get_trust_level (
+			priv->otr_proxy);
+		empathy_theme_adium_append_event (chat->view,
+			trust_level_to_str (level));
+	} else {
+		empathy_theme_adium_append_event (chat->view,
+		    "Unknown OTR action");
+	}
+}
+
 static void chat_command_help (EmpathyChat *chat, GStrv strv);
 
 typedef void (*ChatCommandFunc) (EmpathyChat *chat, GStrv strv);
@@ -1092,6 +1185,15 @@ static ChatCommandItem commands[] = {
 
 	{"whale", 1, 1, chat_command_whale, NULL, NULL},
 	{"babywhale", 1, 1, chat_command_babywhale, NULL, NULL},
+
+	{"otr", 2, 2, chat_command_otr, NULL,
+	 N_("/otr <action>: Interact with the Off-The-Record system. Possible actions are:\n"
+	    "• show: Show current status of the Off-The-Record session\n"
+	    "• status: Alias for the 'show' action\n"
+	    "• start: Start an Off-The-Record session\n"
+	    "• trust: Tell that you trust the current remote contact's fingerprint\n"
+	    "• untrust: Tell that you don't trust the current remote contact's fingerprint"
+	    )},
 };
 
 static void
@@ -3074,6 +3176,7 @@ chat_invalidated_cb (EmpathyTpChat *tp_chat,
 	chat_composing_remove_timeout (chat);
 	g_object_unref (priv->tp_chat);
 	priv->tp_chat = NULL;
+	g_clear_object (&priv->otr_proxy);
 	g_object_notify (G_OBJECT (chat), "tp-chat");
 
 	empathy_theme_adium_append_event (chat->view, _("Disconnected"));
@@ -3417,6 +3520,8 @@ chat_finalize (GObject *object)
 	g_completion_free (priv->completion);
 
 	tp_clear_pointer (&priv->highlight_regex, g_regex_unref);
+
+	g_clear_object (&priv->otr_proxy);
 
 	G_OBJECT_CLASS (empathy_chat_parent_class)->finalize (object);
 }
@@ -4099,6 +4204,76 @@ chat_n_messages_sending_changed_cb (EmpathyChat *self)
 	g_object_notify (G_OBJECT (self), "n-messages-sending");
 }
 
+static void
+otr_update_ui (EmpathyChat *chat)
+{
+	EmpathyChatPriv *priv = GET_PRIV (chat);
+	TrustLevel level;
+	GVariant *tuple;
+
+	level = empathy_gdbus_channel_interface_otr1_get_trust_level (
+		priv->otr_proxy);
+	if (priv->trust_level != level) {
+		priv->trust_level = level;
+		empathy_theme_adium_append_event (chat->view,
+			trust_level_to_str (level));
+	}
+
+	tuple = empathy_gdbus_channel_interface_otr1_get_remote_fingerprint (
+		priv->otr_proxy);
+	if (tuple != NULL && level == TRUST_LEVEL_UNVERIFIED) {
+		const gchar *fp;
+		gchar *msg;
+
+		g_variant_get (tuple, "(&s@ay)", &fp, NULL);
+		msg = g_strdup_printf (_("Remote contact's fingerprint: '%s'"),
+			fp);
+		empathy_theme_adium_append_event (chat->view, msg);
+		g_free (msg);
+
+		empathy_theme_adium_append_event (chat->view,
+			_("Type '/otr trust' if you trust that fingerprint"));
+	}
+}
+
+static void
+setup_otr (EmpathyChat *chat)
+{
+	EmpathyChatPriv *priv = GET_PRIV (chat);
+	TpConnection *connection;
+	gchar *bus_name;
+
+	g_clear_object (&priv->otr_proxy);
+
+	connection = tp_channel_get_connection ((TpChannel *) priv->tp_chat);
+	bus_name = g_strconcat (tp_proxy_get_object_path (connection) + 1,
+				"/OTR", NULL);
+	g_strdelimit (bus_name, "/", '.');
+
+	priv->otr_proxy =
+		empathy_gdbus_channel_interface_otr1_proxy_new_for_bus_sync (
+			G_BUS_TYPE_SESSION,
+			G_DBUS_PROXY_FLAGS_NONE,
+			bus_name,
+			tp_proxy_get_object_path (priv->tp_chat),
+			NULL, NULL);
+	g_free (bus_name);
+
+	bus_name = NULL;
+	if (priv->otr_proxy != NULL)
+		bus_name = g_dbus_proxy_get_name_owner (G_DBUS_PROXY (priv->otr_proxy));
+	if (bus_name == NULL) {
+		DEBUG ("OTR is not supported for this channel: %s",
+			tp_proxy_get_object_path (priv->tp_chat));
+		g_clear_object (&priv->otr_proxy);
+	} else {
+		otr_update_ui (chat);
+		g_signal_connect_swapped (priv->otr_proxy, "g-properties-changed",
+			G_CALLBACK (otr_update_ui), chat);
+	}
+	g_free (bus_name);
+}
+
 void
 empathy_chat_set_tp_chat (EmpathyChat   *chat,
 			  EmpathyTpChat *tp_chat)
@@ -4175,6 +4350,8 @@ empathy_chat_set_tp_chat (EmpathyChat   *chat,
 			empathy_theme_adium_append_event (chat->view, _("Connected"));
 		}
 	}
+
+	setup_otr (chat);
 
 	g_object_notify (G_OBJECT (chat), "tp-chat");
 	g_object_notify (G_OBJECT (chat), "id");

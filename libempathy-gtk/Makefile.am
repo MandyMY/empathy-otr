@@ -275,6 +275,22 @@ EXTRA_DIST +=					\
 	empathy-location-manager.h
 endif
 
+_gdbus/%.c: _gdbus/%-stamp
+	@:
+_gdbus/%.h: _gdbus/%-stamp
+	@:
+_gdbus/%-stamp: Makefile %.xml
+	$(MKDIR_P) _gdbus
+	gdbus-codegen --interface-prefix im.telepathy.v1. \
+	              --generate-c-code _gdbus/$* \
+	              --c-namespace EmpathyGDBus \
+	              $*.xml
+	touch $@
+
+BUILT_SOURCES += \
+	_gdbus/Channel_Interface_OTR1.h \
+	_gdbus/Channel_Interface_OTR1.c
+
 CLEANFILES =				\
 	$(BUILT_SOURCES)		\
 	stamp-empathy-gtk-enum-types.h
