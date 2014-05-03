@@ -1112,7 +1112,8 @@ void
 empathy_theme_adium_append_event (EmpathyThemeAdium *self,
     const gchar *str)
 {
-  gchar *str_escaped;
+  TpawStringParser *parsers;
+  GString *string;
   PangoDirection direction;
 
   if (self->priv->pages_loading != 0)
@@ -1122,9 +1123,12 @@ empathy_theme_adium_append_event (EmpathyThemeAdium *self,
     }
 
   direction = pango_find_base_dir (str, -1);
-  str_escaped = g_markup_escape_text (str, -1);
-  theme_adium_append_event_escaped (self, str_escaped, direction);
-  g_free (str_escaped);
+
+  parsers = empathy_webkit_get_string_parser (FALSE);
+  string = g_string_sized_new (strlen (str));
+  tpaw_string_parser_substr (str, -1, parsers, string);
+  theme_adium_append_event_escaped (self, string->str, direction);
+  g_string_free (string, TRUE);
 }
 
 void
