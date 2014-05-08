@@ -177,6 +177,7 @@ struct _EmpathyChatPriv {
 
 	EmpathyGDBusChannelInterfaceOTR1 *otr_proxy;
 	TrustLevel trust_level;
+	GCancellable *otr_cancellable;
 };
 
 typedef struct {
@@ -3158,6 +3159,8 @@ chat_remote_contact_changed_cb (EmpathyChat *chat)
 	g_object_notify (G_OBJECT (chat), "id");
 }
 
+static void otr_clear (EmpathyChat *chat);
+
 static void
 chat_invalidated_cb (EmpathyTpChat *tp_chat,
 		 guint domain,
@@ -3176,7 +3179,7 @@ chat_invalidated_cb (EmpathyTpChat *tp_chat,
 	chat_composing_remove_timeout (chat);
 	g_object_unref (priv->tp_chat);
 	priv->tp_chat = NULL;
-	g_clear_object (&priv->otr_proxy);
+	otr_clear (chat);
 	g_object_notify (G_OBJECT (chat), "tp-chat");
 
 	empathy_theme_adium_append_event (chat->view, _("Disconnected"));
@@ -3521,7 +3524,7 @@ chat_finalize (GObject *object)
 
 	tp_clear_pointer (&priv->highlight_regex, g_regex_unref);
 
-	g_clear_object (&priv->otr_proxy);
+	otr_clear (chat);
 
 	G_OBJECT_CLASS (empathy_chat_parent_class)->finalize (object);
 }
@@ -4205,6 +4208,17 @@ chat_n_messages_sending_changed_cb (EmpathyChat *self)
 }
 
 static void
+otr_clear (EmpathyChat *chat)
+{
+	EmpathyChatPriv *priv = GET_PRIV (chat);
+
+	g_clear_object (&priv->otr_proxy);
+	if (priv->otr_cancellable != NULL)
+		g_cancellable_cancel (priv->otr_cancellable);
+	g_clear_object (&priv->otr_cancellable);
+}
+
+static void
 otr_update_ui (EmpathyChat *chat)
 {
 	EmpathyChatPriv *priv = GET_PRIV (chat);
@@ -4237,31 +4251,35 @@ otr_update_ui (EmpathyChat *chat)
 }
 
 static void
-setup_otr (EmpathyChat *chat)
+otr_proxy_new_cb (GObject *source,
+		  GAsyncResult *result,
+		  gpointer user_data)
 {
-	EmpathyChatPriv *priv = GET_PRIV (chat);
-	TpConnection *connection;
+	EmpathyChat *chat = user_data;
+	EmpathyChatPriv *priv;
+	EmpathyGDBusChannelInterfaceOTR1 *proxy;
 	gchar *bus_name;
+	GError *error = NULL;
 
-	g_clear_object (&priv->otr_proxy);
+	/* At this stage chat could have been finalized, or switched to another
+	 * channel, in which case we'll get a cancelled error from _finish(). */
+	proxy = empathy_gdbus_channel_interface_otr1_proxy_new_for_bus_finish (
+		result, &error);
+	if (proxy == NULL) {
+		DEBUG ("Error creating OTR proxy: %s", error->message);
+		g_clear_error (&error);
+		return;
+	}
 
-	connection = tp_channel_get_connection ((TpChannel *) priv->tp_chat);
-	bus_name = g_strconcat (tp_proxy_get_object_path (connection) + 1,
-				"/OTR", NULL);
-	g_strdelimit (bus_name, "/", '.');
+	priv = GET_PRIV (chat);
+	g_assert (priv->otr_proxy == NULL);
+	g_assert (priv->otr_cancellable != NULL);
+	priv->otr_proxy = proxy;
+	g_clear_object (&priv->otr_cancellable);
 
-	priv->otr_proxy =
-		empathy_gdbus_channel_interface_otr1_proxy_new_for_bus_sync (
-			G_BUS_TYPE_SESSION,
-			G_DBUS_PROXY_FLAGS_NONE,
-			bus_name,
-			tp_proxy_get_object_path (priv->tp_chat),
-			NULL, NULL);
-	g_free (bus_name);
-
-	bus_name = NULL;
-	if (priv->otr_proxy != NULL)
-		bus_name = g_dbus_proxy_get_name_owner (G_DBUS_PROXY (priv->otr_proxy));
+	/* Verify the proxy is not waiting for the bus name to appear, because
+	 * that will never happen. This hack will go away in telepathy1.0. */
+	bus_name = g_dbus_proxy_get_name_owner (G_DBUS_PROXY (priv->otr_proxy));
 	if (bus_name == NULL) {
 		DEBUG ("OTR is not supported for this channel: %s",
 			tp_proxy_get_object_path (priv->tp_chat));
@@ -4271,6 +4289,35 @@ setup_otr (EmpathyChat *chat)
 		g_signal_connect_swapped (priv->otr_proxy, "g-properties-changed",
 			G_CALLBACK (otr_update_ui), chat);
 	}
+	g_free (bus_name);
+}
+
+static void
+setup_otr (EmpathyChat *chat)
+{
+	EmpathyChatPriv *priv = GET_PRIV (chat);
+	TpConnection *connection;
+	gchar *bus_name;
+
+	otr_clear (chat);
+
+	/* CMs who support OTR owns a special bus name because it goes over a
+	 * GDBusConnection. In telepathy1.0 this will go away and be a real
+	 * interface of the channel because everything has been ported to GDBus.
+	  */
+	connection = tp_channel_get_connection ((TpChannel *) priv->tp_chat);
+	bus_name = g_strconcat (tp_proxy_get_object_path (connection) + 1,
+				"/OTR", NULL);
+	g_strdelimit (bus_name, "/", '.');
+
+	priv->otr_cancellable = g_cancellable_new ();
+	empathy_gdbus_channel_interface_otr1_proxy_new_for_bus (
+		G_BUS_TYPE_SESSION,
+		G_DBUS_PROXY_FLAGS_NONE,
+		bus_name,
+		tp_proxy_get_object_path (priv->tp_chat),
+		priv->otr_cancellable,
+		otr_proxy_new_cb, chat);
 	g_free (bus_name);
 }
 
