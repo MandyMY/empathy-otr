@@ -1052,18 +1052,22 @@ trust_level_to_str (TrustLevel level)
 {
 	switch (level) {
 		case TRUST_LEVEL_NOT_PRIVATE:
-			return _("The conversation is currently unencrypted.");
+			return _("The conversation is not currently encrypted "
+				 "with OTR.");
 		case TRUST_LEVEL_UNVERIFIED:
-			return _("The conversation is currently encrypted but "
-				 "the remote contact has not been authentified");
+			return _("The conversation is currently encrypted with "
+				 "OTR but the remote contact has not been "
+				 "authentified");
 		case TRUST_LEVEL_PRIVATE:
-			return _("The conversation is currently encrypted and "
-				 "the remote contact has been authentified");
+			return _("The conversation is currently encrypted with "
+				 "OTR and the remote contact has been "
+				 "authentified");
 		case TRUST_LEVEL_FINISHED:
 			return _("The OTR session is finished");
 	}
 
-	return _("unknown");
+	g_warn_if_reached ();
+	return _("The OTR status of this conversation is unknown");
 }
 
 static void
