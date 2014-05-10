@@ -1085,6 +1085,9 @@ chat_command_otr (EmpathyChat *chat,
 	if (!tp_strdiff (strv[1], "start")) {
 		empathy_gdbus_channel_interface_otr1_call_initialize (
 			priv->otr_proxy, NULL, NULL, NULL);
+	} else if (!tp_strdiff (strv[1], "stop")) {
+		empathy_gdbus_channel_interface_otr1_call_stop (
+			priv->otr_proxy, NULL, NULL, NULL);
 	} else if (!tp_strdiff (strv[1], "trust") ||
 	           !tp_strdiff (strv[1], "untrust")) {
 		GVariant *tuple;
