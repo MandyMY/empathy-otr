@@ -30,7 +30,7 @@
 #include "empathy-webcredentials-monitor.h"
 
 #define PLUGIN_NAME "uoa"
-#define PLUGIN_PRIORITY (MCP_ACCOUNT_STORAGE_PLUGIN_PRIO_KEYRING + 10)
+#define PLUGIN_PRIORITY (MCP_ACCOUNT_STORAGE_PLUGIN_PRIO_NORMAL)
 #define PLUGIN_DESCRIPTION "Provide Telepathy Accounts from UOA via libaccounts-glib"
 #define PLUGIN_PROVIDER EMPATHY_UOA_PROVIDER
 
@@ -79,8 +79,8 @@ typedef struct {
 } DelayedSignalData;
 
 
-static gchar *
-_service_dup_tp_value (AgAccountService *service,
+static GVariant *
+_service_get_tp_value (AgAccountService *service,
     const gchar *key)
 {
   gchar *real_key = g_strdup_printf (KEY_PREFIX "%s", key);
@@ -88,43 +88,44 @@ _service_dup_tp_value (AgAccountService *service,
 
   value = ag_account_service_get_variant (service, real_key, NULL);
   g_free (real_key);
-  if (value == NULL)
-    return NULL;
 
-  return g_variant_dup_string (value, NULL);
+  return value;
 }
 
 static void
 _service_set_tp_value (AgAccountService *service,
     const gchar *key,
-    const gchar *value)
+    GVariant *value)
 {
   gchar *real_key = g_strdup_printf (KEY_PREFIX "%s", key);
 
   if (value != NULL)
-    {
-      GVariant *gvariant = g_variant_new_string (value);
-      ag_account_service_set_variant (service, real_key, gvariant);
-    }
+    ag_account_service_set_variant (service, real_key, value);
   else
-    {
-      ag_account_service_set_variant (service, real_key, NULL);
-    }
+    ag_account_service_set_variant (service, real_key, NULL);
+
   g_free (real_key);
 }
 
 /* Returns NULL if the account never has been imported into MC before */
-static gchar *
-_service_dup_tp_account_name (AgAccountService *service)
+static const gchar *
+_service_get_tp_account_name (AgAccountService *service)
 {
-  return _service_dup_tp_value (service, KEY_ACCOUNT_NAME);
+  GVariant *value;
+
+  value = _service_get_tp_value (service, KEY_ACCOUNT_NAME);
+  if (value != NULL && g_variant_is_of_type (value, G_VARIANT_TYPE_STRING))
+    return g_variant_get_string (value);
+
+  return NULL;
 }
 
 static void
 _service_set_tp_account_name (AgAccountService *service,
     const gchar *account_name)
 {
-  _service_set_tp_value (service, KEY_ACCOUNT_NAME, account_name);
+  _service_set_tp_value (service, KEY_ACCOUNT_NAME,
+      g_variant_new_string (account_name));
 }
 
 static void
@@ -132,7 +133,7 @@ _service_enabled_cb (AgAccountService *service,
     gboolean enabled,
     McpAccountManagerUoa *self)
 {
-  gchar *account_name = _service_dup_tp_account_name (service);
+  const gchar *account_name = _service_get_tp_account_name (service);
 
   if (!self->priv->ready || account_name == NULL)
     return;
@@ -140,27 +141,32 @@ _service_enabled_cb (AgAccountService *service,
   DEBUG ("UOA account %s toggled: %s", account_name,
       enabled ? "enabled" : "disabled");
 
-  g_signal_emit_by_name (self, "toggled", account_name, enabled);
-
-  g_free (account_name);
+  mcp_account_storage_emit_toggled ((McpAccountStorage *) self, account_name,
+      enabled);
 }
 
 static void
 _service_changed_cb (AgAccountService *service,
     McpAccountManagerUoa *self)
 {
-  gchar *account_name = _service_dup_tp_account_name (service);
+  const gchar *account_name = _service_get_tp_account_name (service);
+  gchar **keys;
+  gchar **iter;
 
   if (!self->priv->ready || account_name == NULL)
     return;
 
   DEBUG ("UOA account %s changed", account_name);
 
-  /* FIXME: Could use ag_account_service_get_changed_fields()
-   * and emit "altered-one" */
-  g_signal_emit_by_name (self, "altered", account_name);
+  keys = ag_account_service_get_changed_fields (service);
+  for (iter = keys; *iter != NULL; iter++)
+    {
+      if (!g_str_has_prefix (*iter, KEY_PREFIX))
+        continue;
 
-  g_free (account_name);
+      mcp_account_storage_emit_altered_one ((McpAccountStorage *) self,
+          account_name, *iter + strlen (KEY_PREFIX));
+    }
 }
 
 static void
@@ -231,7 +237,7 @@ _account_created_cb (AgManager *manager,
   while (l != NULL)
     {
       AgAccountService *service = ag_account_service_new (account, l->data);
-      gchar *account_name = _service_dup_tp_account_name (service);
+      const gchar *account_name = _service_get_tp_account_name (service);
 
       /* If this is the first time we see this service, we have to generate an
        * account_name for it. */
@@ -272,10 +278,12 @@ _account_created_cb (AgManager *manager,
       if (account_name != NULL)
         {
           if (_add_service (self, service, account_name))
-            g_signal_emit_by_name (self, "created", account_name);
+            {
+              mcp_account_storage_emit_created ((McpAccountStorage *) self,
+                  account_name);
+            }
         }
 
-      g_free (account_name);
       g_object_unref (service);
       ag_service_unref (l->data);
       l = g_list_delete_link (l, l);
@@ -308,21 +316,20 @@ _account_deleted_cb (AgManager *manager,
     {
       AgAccountService *service = value;
       AgAccount *account = ag_account_service_get_account (service);
-      gchar *account_name;
+      const gchar *account_name;
 
       if (account->id != id)
         continue;
 
-      account_name = _service_dup_tp_account_name (service);
+      account_name = _service_get_tp_account_name (service);
       if (account_name == NULL)
         continue;
 
       DEBUG ("UOA account %s deleted", account_name);
 
       g_hash_table_iter_remove (&iter);
-      g_signal_emit_by_name (self, "deleted", account_name);
-
-      g_free (account_name);
+      mcp_account_storage_emit_deleted ((McpAccountStorage *) self,
+          account_name);
     }
 }
 
@@ -391,13 +398,12 @@ _ensure_loaded (McpAccountManagerUoa *self)
     {
       AgAccountService *service = services->data;
       AgAccount *account = ag_account_service_get_account (service);
-      gchar *account_name = _service_dup_tp_account_name (service);
+      const gchar *account_name = _service_get_tp_account_name (service);
 
       if (account_name != NULL)
         {
           /* This service was already known, we can add it now */
           _add_service (self, service, account_name);
-          g_free (account_name);
         }
       else
         {
@@ -417,8 +423,8 @@ _ensure_loaded (McpAccountManagerUoa *self)
 }
 
 static GList *
-account_manager_uoa_list (const McpAccountStorage *storage,
-    const McpAccountManager *am)
+account_manager_uoa_list (McpAccountStorage *storage,
+    McpAccountManager *am)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
   GList *accounts = NULL;
@@ -426,8 +432,6 @@ account_manager_uoa_list (const McpAccountStorage *storage,
   gpointer key;
 
   DEBUG (G_STRFUNC);
-
-  g_return_val_if_fail (self->priv->manager != NULL, NULL);
 
   _ensure_loaded (self);
 
@@ -449,134 +453,163 @@ provider_to_tp_service_name (const gchar *provider_name)
   return provider_name;
 }
 
-static gboolean
-account_manager_uoa_get (const McpAccountStorage *storage,
-    const McpAccountManager *am,
+static GVariant *
+variant_ref0 (GVariant *v)
+{
+  return (v == NULL ? NULL : g_variant_ref (v));
+}
+
+static GVariant *
+account_manager_uoa_get_parameter (McpAccountStorage *storage,
+    McpAccountManager *am,
     const gchar *account_name,
-    const gchar *key)
+    const gchar *parameter,
+    const GVariantType *type,
+    McpParameterFlags *flags)
+{
+  McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
+  AgAccountService *service;
+  gchar *param_key;
+  GVariant *ret;
+
+  service = g_hash_table_lookup (self->priv->accounts, account_name);
+  g_return_val_if_fail (service != NULL, NULL);
+
+  DEBUG ("%s: %s, %s", G_STRFUNC, account_name, key);
+
+  if (flags != NULL)
+    *flags = 0;
+
+  param_key = g_strdup_printf ("param-%s", parameter);
+  ret =  _service_get_tp_value (service, param_key);
+  g_free (param_key);
+
+  return variant_ref0 (ret);
+}
+
+static GVariant *
+account_manager_uoa_get_attribute (McpAccountStorage *storage,
+    McpAccountManager *am,
+    const gchar *account_name,
+    const gchar *attribute,
+    const GVariantType *type,
+    McpParameterFlags *flags)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
   AgAccountService *service;
   AgAccount *account;
   AgService *s;
-  gboolean handled = FALSE;
-
-  g_return_val_if_fail (self->priv->manager != NULL, FALSE);
 
   service = g_hash_table_lookup (self->priv->accounts, account_name);
-  if (service == NULL)
-    return FALSE;
+  g_return_val_if_fail (service != NULL, NULL);
 
   DEBUG ("%s: %s, %s", G_STRFUNC, account_name, key);
+
+  if (flags != NULL)
+    *flags = 0;
 
   account = ag_account_service_get_account (service);
   s = ag_account_service_get_service (service);
 
-  /* NULL key means we want all settings */
-  if (key == NULL)
-    {
-      AgAccountSettingIter iter;
-      const gchar *k;
-      GVariant *v;
-
-      ag_account_service_settings_iter_init (service, &iter, KEY_PREFIX);
-      while (ag_account_settings_iter_get_next (&iter, &k, &v))
-        {
-          if (!g_variant_is_of_type (v, G_VARIANT_TYPE_STRING))
-            continue;
-
-          mcp_account_manager_set_value (am, account_name,
-              k, g_variant_get_string (v, NULL));
-        }
-    }
-
   /* Some special keys that are not stored in setting */
-  if (key == NULL || !tp_strdiff (key, "Enabled"))
+  if (!tp_strdiff (attribute, "Enabled"))
     {
-      mcp_account_manager_set_value (am, account_name, "Enabled",
-          ag_account_service_get_enabled (service) ? "true" : "false");
-      handled = TRUE;
+      return g_variant_ref_sink (g_variant_new_boolean (
+          ag_account_service_get_enabled (service)));
+    }
+  if (!tp_strdiff (attribute, "DisplayName"))
+    {
+      return g_variant_ref_sink (g_variant_new_string (
+          ag_account_get_display_name (account)));
     }
 
-  if (key == NULL || !tp_strdiff (key, "DisplayName"))
+  if (!tp_strdiff (attribute, "Service"))
     {
-      mcp_account_manager_set_value (am, account_name, "DisplayName",
-          ag_account_get_display_name (account));
-      handled = TRUE;
+      return g_variant_ref_sink (g_variant_new_string (
+          provider_to_tp_service_name (
+              ag_account_get_provider_name (account))));
     }
 
-  if (key == NULL || !tp_strdiff (key, "Service"))
+  if (!tp_strdiff (attribute, "Icon"))
     {
-      mcp_account_manager_set_value (am, account_name, "Service",
-          provider_to_tp_service_name (ag_account_get_provider_name (account)));
-      handled = TRUE;
+      return g_variant_ref_sink (g_variant_new_string (
+          ag_service_get_icon_name (s)));
     }
 
-  if (key == NULL || !tp_strdiff (key, "Icon"))
-    {
-      mcp_account_manager_set_value (am, account_name, "Icon",
-          ag_service_get_icon_name (s));
-      handled = TRUE;
-    }
-
-  /* If it was none of the above, then just lookup in service' settings */
-  if (!handled)
-    {
-      gchar *value = _service_dup_tp_value (service, key);
-
-      mcp_account_manager_set_value (am, account_name, key, value);
-      g_free (value);
-    }
-
-  return TRUE;
+  return variant_ref0 (_service_get_tp_value (service, attribute));
 }
 
-static gboolean
-account_manager_uoa_set (const McpAccountStorage *storage,
-    const McpAccountManager *am,
+static McpAccountStorageSetResult
+account_manager_uoa_set_parameter (McpAccountStorage *storage,
+    McpAccountManager *am,
     const gchar *account_name,
-    const gchar *key,
-    const gchar *val)
+    const gchar *parameter,
+    GVariant *val,
+    McpAttributeFlags flags)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
   AgAccountService *service;
-  AgAccount *account;
+  gchar *param_key;
 
   g_return_val_if_fail (self->priv->manager != NULL, FALSE);
 
   service = g_hash_table_lookup (self->priv->accounts, account_name);
-  if (service == NULL)
-    return FALSE;
-
-  account = ag_account_service_get_account (service);
+  g_return_val_if_fail (service != NULL, MCP_ACCOUNT_STORAGE_SET_RESULT_FAILED);
 
   DEBUG ("%s: %s, %s, %s", G_STRFUNC, account_name, key, val);
 
-  if (!tp_strdiff (key, "Enabled"))
+  param_key = g_strdup_printf ("param-%s", parameter);
+  _service_set_tp_value (service, param_key, val);
+  g_free (param_key);
+
+  return MCP_ACCOUNT_STORAGE_SET_RESULT_CHANGED;
+}
+
+static McpAccountStorageSetResult
+account_manager_uoa_set_attribute (McpAccountStorage *storage,
+    McpAccountManager *am,
+    const gchar *account_name,
+    const gchar *attribute,
+    GVariant *val,
+    McpAttributeFlags flags)
+{
+  McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
+  AgAccountService *service;
+
+  g_return_val_if_fail (self->priv->manager != NULL, FALSE);
+
+  service = g_hash_table_lookup (self->priv->accounts, account_name);
+  g_return_val_if_fail (service != NULL, MCP_ACCOUNT_STORAGE_SET_RESULT_FAILED);
+
+  DEBUG ("%s: %s, %s, %s", G_STRFUNC, account_name, key, val);
+
+  account = ag_account_service_get_account (service);
+
+  if (!tp_strdiff (attribute, "Enabled"))
     {
       /* Enabled is a global setting on the account, not per-services,
        * unfortunately */
       ag_account_select_service (account, NULL);
-      ag_account_set_enabled (account, !tp_strdiff (val, "true"));
+      ag_account_set_enabled (account, g_variant_get_boolean (val));
     }
-  else if (!tp_strdiff (key, "DisplayName"))
+  else if (!tp_strdiff (attribute, "DisplayName"))
     {
-      ag_account_set_display_name (account, val);
+      ag_account_set_display_name (account, g_variant_get_string (val));
     }
   else
     {
-      _service_set_tp_value (service, key, val);
+      _service_set_tp_value (service, attribute, val);
     }
 
-  return TRUE;
+  return MCP_ACCOUNT_STORAGE_SET_RESULT_CHANGED;
 }
 
 static gchar *
-account_manager_uoa_create (const McpAccountStorage *storage,
-    const McpAccountManager *am,
+account_manager_uoa_create (McpAccountStorage *storage,
+    McpAccountManager *am,
     const gchar *cm_name,
     const gchar *protocol_name,
-    GHashTable *params,
+    const gchar *identification,
     GError **error)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
@@ -614,7 +647,7 @@ account_manager_uoa_create (const McpAccountStorage *storage,
   g_object_unref (account);
 
   account_name = mcp_account_manager_get_unique_name (self->priv->am,
-      cm_name, protocol_name, params);
+      cm_name, protocol_name, identification);
   _service_set_tp_account_name (service, account_name);
   g_assert (_add_service (self, service, account_name));
 
@@ -623,59 +656,85 @@ account_manager_uoa_create (const McpAccountStorage *storage,
   return account_name;
 }
 
-static gboolean
-account_manager_uoa_delete (const McpAccountStorage *storage,
-    const McpAccountManager *am,
-    const gchar *account_name,
-    const gchar *key)
+static void
+delete_store_cb (GObject *source_object,
+    GAsyncResult *res,
+    gpointer user_data)
+{
+  AgAccount *account = AG_ACCOUNT (source_object);
+  GTask *task = user_data
+  McpAccountStorage *storage = g_task_get_source_object (task);
+  const gchar *account_name = g_task_get_task_data (task);
+  GError *error = NULL;
+
+  if (!ag_account_store_finish (account, res, &error))
+    {
+      g_task_return_error (task, error);
+      goto out;
+    }
+
+  if (g_hash_table_remove (self->priv->accounts, account_name)
+    mcp_account_storage_emit_deleted (storage, account_name);
+
+  g_task_return_boolean (task, TRUE);
+
+out:
+  g_object_unref (task);
+}
+
+static void
+account_manager_uoa_delete_async (McpAccountStorage *storage,
+      McpAccountManager *am,
+      const gchar *account_name,
+      GCancellable *cancellable,
+      GAsyncReadyCallback callback,
+      gpointer user_data)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
   AgAccountService *service;
   AgAccount *account;
+  GTask *task
 
   g_return_val_if_fail (self->priv->manager != NULL, FALSE);
 
   service = g_hash_table_lookup (self->priv->accounts, account_name);
-  if (service == NULL)
-    return FALSE;
+  g_return_if_fail (service != NULL);
 
   account = ag_account_service_get_account (service);
 
   DEBUG ("%s: %s, %s", G_STRFUNC, account_name, key);
 
-  if (key == NULL)
-    {
-      ag_account_delete (account);
-      g_hash_table_remove (self->priv->accounts, account_name);
-    }
-  else
-    {
-      _service_set_tp_value (service, key, NULL);
-    }
+  task = g_task_new (self, cancellable, callback, user_data);
+  g_task_set_task_data (task, g_strdup (account_name), g_free);
 
-  return TRUE;
+  ag_account_delete (account);
+  ag_account_store_async (account, cancellable, delete_store_cb, task);
+}
+
+gboolean
+account_manager_uoa_delete_finish (McpAccountStorage *storage,
+    GAsyncResult *result,
+    GError **error)
+{
+  return g_task_propagate_boolean (G_TASK (result), error);
 }
 
 static gboolean
-account_manager_uoa_commit (const McpAccountStorage *storage,
-    const McpAccountManager *am)
+account_manager_uoa_commit (McpAccountStorage *storage,
+    McpAccountManager *am,
+    const gchar *account_name)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
-  GHashTableIter iter;
-  gpointer value;
+  AgAccountService *service;
+  AgAccount *account;
 
   DEBUG (G_STRFUNC);
 
-  g_return_val_if_fail (self->priv->manager != NULL, FALSE);
+  service = g_hash_table_lookup (self->priv->accounts, account_name);
+  g_return_val_if_fail (service != NULL, MCP_ACCOUNT_STORAGE_SET_RESULT_FAILED);
 
-  g_hash_table_iter_init (&iter, self->priv->accounts);
-  while (g_hash_table_iter_next (&iter, NULL, &value))
-    {
-      AgAccountService *service = value;
-      AgAccount *account = ag_account_service_get_account (service);
-
-      ag_account_store_async (account, NULL, _account_stored_cb, self);
-    }
+  account = ag_account_service_get_account (service);
+  ag_account_store_async (account, NULL, _account_stored_cb, self);
 
   return TRUE;
 }
@@ -693,7 +752,7 @@ failure_removed_cb (EmpathyWebcredentialsMonitor *monitor,
   while (l != NULL)
     {
       AgAccountService *service = ag_account_service_new (account, l->data);
-      gchar *account_name = _service_dup_tp_account_name (service);
+      const gchar *account_name = _service_get_tp_account_name (service);
 
       if (account_name != NULL)
         {
@@ -703,7 +762,6 @@ failure_removed_cb (EmpathyWebcredentialsMonitor *monitor,
               account_name);
         }
 
-      g_free (account_name);
       g_object_unref (service);
       ag_service_unref (l->data);
       l = g_list_delete_link (l, l);
@@ -711,8 +769,8 @@ failure_removed_cb (EmpathyWebcredentialsMonitor *monitor,
 }
 
 static void
-account_manager_uoa_ready (const McpAccountStorage *storage,
-    const McpAccountManager *am)
+account_manager_uoa_ready (McpAccountStorage *storage,
+    McpAccountManager *am)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
   DelayedSignalData *data;
@@ -752,7 +810,7 @@ account_manager_uoa_ready (const McpAccountStorage *storage,
 }
 
 static void
-account_manager_uoa_get_identifier (const McpAccountStorage *storage,
+account_manager_uoa_get_identifier (McpAccountStorage *storage,
     const gchar *account_name,
     GValue *identifier)
 {
@@ -763,8 +821,7 @@ account_manager_uoa_get_identifier (const McpAccountStorage *storage,
   g_return_if_fail (self->priv->manager != NULL);
 
   service = g_hash_table_lookup (self->priv->accounts, account_name);
-  if (service == NULL)
-    return;
+  g_return_if_fail (service != NULL);
 
   account = ag_account_service_get_account (service);
 
@@ -773,7 +830,7 @@ account_manager_uoa_get_identifier (const McpAccountStorage *storage,
 }
 
 static guint
-account_manager_uoa_get_restrictions (const McpAccountStorage *storage,
+account_manager_uoa_get_restrictions (McpAccountStorage *storage,
     const gchar *account_name)
 {
   McpAccountManagerUoa *self = (McpAccountManagerUoa *) storage;
@@ -783,10 +840,8 @@ account_manager_uoa_get_restrictions (const McpAccountStorage *storage,
 
   g_return_val_if_fail (self->priv->manager != NULL, 0);
 
-  /* If we don't know this account, we cannot do anything */
   service = g_hash_table_lookup (self->priv->accounts, account_name);
-  if (service == NULL)
-    return G_MAXUINT;
+  g_return_val_if_fail (service != NULL, 0);
 
   value = ag_account_service_get_variant (service,
       KEY_PREFIX KEY_READONLY_PARAMS, NULL);
@@ -801,23 +856,22 @@ account_manager_uoa_get_restrictions (const McpAccountStorage *storage,
 static void
 account_storage_iface_init (McpAccountStorageIface *iface)
 {
-  mcp_account_storage_iface_set_name (iface, PLUGIN_NAME);
-  mcp_account_storage_iface_set_desc (iface, PLUGIN_DESCRIPTION);
-  mcp_account_storage_iface_set_priority (iface, PLUGIN_PRIORITY);
-  mcp_account_storage_iface_set_provider (iface, PLUGIN_PROVIDER);
+  iface->name = PLUGIN_NAME;
+  iface->desc = PLUGIN_DESCRIPTION;
+  iface->priority = PLUGIN_PRIORITY;
+  iface->provider = PLUGIN_PROVIDER;
 
-#define IMPLEMENT(x) mcp_account_storage_iface_implement_##x(iface, \
-    account_manager_uoa_##x)
-  IMPLEMENT (get);
-  IMPLEMENT (list);
-  IMPLEMENT (set);
-  IMPLEMENT (create);
-  IMPLEMENT (delete);
-  IMPLEMENT (commit);
-  IMPLEMENT (ready);
-  IMPLEMENT (get_identifier);
-  IMPLEMENT (get_restrictions);
-#undef IMPLEMENT
+  iface->get_attribute = account_manager_uoa_get_attribute;
+  iface->get_parameter = account_manager_uoa_get_parameter;
+  iface->set_attribute = account_manager_uoa_set_attribute;
+  iface->set_parameter = account_manager_uoa_set_parameter;
+  iface->create = account_manager_uoa_create;
+  iface->delete_async = account_manager_uoa_delete_async;
+  iface->delete_finish = account_manager_uoa_delete_finish;
+  iface->commit = account_manager_uoa_commit;
+  iface->list = account_manager_uoa_list;
+  iface->get_identifier = account_manager_uoa_get_identifier;
+  iface->get_restrictions = account_manager_uoa_get_restrictions;
 }
 
 McpAccountManagerUoa *
